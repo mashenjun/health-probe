@@ -42,11 +42,11 @@ struct Args {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // read prod from env
+    // read args variables.
     let args = Args::parse();
     let mut listen_port  =  args.listen_port;
-    let mut probe_addr = SockaddrIn::new(0, 0, 0, 0, 8085);
-    // env variable can override args variable.
+    let mut probe_addr = SockaddrIn::from_str(args.probe_addr.as_str()).unwrap();
+    // env variables can override args variables.
     if let Ok(port) = env::var("LISTEN_PORT") {
         listen_port = port.to_string();
     }
@@ -71,9 +71,9 @@ struct ProbeApp {
 // todo(shenjun): make check_status async
 fn check_status(addr: &SockaddrIn) -> i32 {
     let linger_opt = libc::linger{l_onoff:1, l_linger: 0};
-    // let poll_flags = PollFlags::from_bits((libc::POLLIN | libc::POLLOUT | libc::POLLRDHUP) as libc::c_short).unwrap();
     if let Ok(sk) = socket(AddressFamily::Inet, SockType::Stream, SockFlag::SOCK_NONBLOCK, None) {
-        // let mut poll_fds:Vec<PollFd> = vec![];
+        // set socket options
+        // TODO(shenjun): add reference link to haproxy source code.
         if syscall!(setsockopt(
             sk,
             libc::SOL_TCP,
@@ -103,8 +103,6 @@ fn check_status(addr: &SockaddrIn) -> i32 {
             revents: 0,
         };
         let poll_res = syscall!(poll(&mut pollfd, 1, 1000));
-        // poll_fds.push(PollFd::new(sk, poll_flags));
-        // let poll_res = poll(&mut poll_fds, 1000);
         if let Err(e) = nix_setsockopt(sk, Linger, &linger_opt) {
             println!("setscoketopt to update linger failed, err: {}", e);
         }
@@ -130,7 +128,7 @@ fn check_status(addr: &SockaddrIn) -> i32 {
 }
 
 async fn health_probe(data: web::Data<ProbeApp>) -> impl Responder {
-    // check target port is ready to connect
+    // check if target port is ready to connect
     let status = check_status(&data.probe_addr);
     if status == 200 {
         return HttpResponse::Ok()
